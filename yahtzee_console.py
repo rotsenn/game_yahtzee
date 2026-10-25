@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Yahtzee en consola: Tú contra Bill (IA Monte Carlo). Un solo archivo, solo biblioteca estándar.
 
-Uso:  python3 yahtzee_consola.py [--sims 300] [--seed 42]
+Uso:  python3 yahtzee_consola.py   (al iniciar pregunta simulaciones y semilla)
 
 Reglas especiales (oficiales de Hasbro):
 - Yahtzee = 50. Se puede anotar 0 en cualquier categoría libre.
@@ -14,9 +14,8 @@ Reglas especiales (oficiales de Hasbro):
 IA: heurística Monte Carlo (no se afirma que sea óptima). Evalúa qué dados conservar con N
 simulaciones por opción y elige la categoría de mayor utilidad =
 puntos − valor_base(categoría) + prima del bono superior [+100 si hay bono de Yahtzee].
-Con --seed la decisión de la IA y los dados son reproducibles.
+Con semilla, los dados y las decisiones de la IA son reproducibles.
 """
-import argparse
 import math
 import random
 from collections import Counter
@@ -39,6 +38,7 @@ def es_yahtzee(d):
 
 
 def puntos_base(cat, dice):
+    """Puntos de una categoría con reglas normales (sin comodín)."""
     c, total, caras = Counter(dice), sum(dice), set(dice)
     if cat in UPPER:
         n = UPPER.index(cat) + 1
@@ -59,6 +59,8 @@ def puntos_base(cat, dice):
 
 
 class Tarjeta:
+    """Casillas de un jugador (None = libre) y bono de Yahtzee, aparte de las casillas."""
+
     def __init__(self):
         self.p = {c: None for c in CATEGORIES}
         self.bono_yahtzee = 0
@@ -73,6 +75,7 @@ class Tarjeta:
         return es_yahtzee(d) and self.p["yahtzee"] is not None
 
     def disponibles(self, d):
+        # Comodín: superior obligatoria > inferior libre > cero en superior libre
         libres = self.libres()
         if not self.es_comodin(d):
             return libres
@@ -91,6 +94,7 @@ class Tarjeta:
         if cat not in self.disponibles(d):
             raise ValueError(cat)
         pts = self.puntos(cat, d)
+        # el bono de +100 solo si la casilla Yahtzee tiene 50; se suma una vez por Yahtzee extra
         if self.es_comodin(d) and self.p["yahtzee"] == PTS_YAHTZEE:
             self.bono_yahtzee += BONO_YAHTZEE
         self.p[cat] = pts
@@ -100,6 +104,7 @@ class Tarjeta:
     def suma_sup(self):
         return sum(self.p[c] or 0 for c in UPPER)
 
+    # el bono superior es derivado: se calcula en el total y no se puede contar dos veces
     @property
     def bono_sup(self):
         return BONO_SUP if self.suma_sup >= UMBRAL else 0
@@ -116,11 +121,13 @@ BASE = {"unos": 2.1, "doses": 5.3, "treses": 8.6, "cuatros": 12.2, "cincos": 15.
 
 
 def utilidad(t, cat, d):
+    """Valor de anotar `cat`: puntos − coste de oportunidad + prima del bono superior."""
     pts = t.puntos(cat, d)
     sup = t.suma_sup + (pts if cat in UPPER else 0)
     if sup >= UMBRAL:
         prima = BONO_SUP
     else:
+        # prima suave según qué tan cerca está el superior esperado de 63
         resto = sum(BASE[c] for c in UPPER if t.p[c] is None and c != cat)
         prima = BONO_SUP / (1 + math.exp(-(sup + resto - UMBRAL) / 6.0))
     u = pts - BASE[cat] + prima
@@ -142,6 +149,7 @@ def racha(caras):
 
 
 def politica(d, t):
+    """Política voraz de los rollouts: seguir una escalera de 4+ o conservar el valor más repetido."""
     c = Counter(d)
     if t.p["escalera_grande"] is None or t.p["escalera_pequena"] is None:
         r = racha(c)
@@ -152,6 +160,7 @@ def politica(d, t):
 
 
 def rollout(kept, restantes, t, rng):
+    """Una simulación: completa los lanzamientos y devuelve la utilidad de la mejor casilla."""
     d = list(kept) + [rng.randint(1, 6) for _ in range(5 - len(kept))]
     for _ in range(restantes - 1):
         k = politica(d, t)
@@ -168,8 +177,9 @@ def decidir_ia(dice, restantes, t, sims, seed):
         return "anotar", cat, f"utilidad {u_stop:.1f}"
     rng = random.Random(repr((seed, dice, restantes, sorted(t.p.items()), t.bono_yahtzee))
                         if seed is not None else None)
+    # mismas semillas para todas las opciones: comparación más estable con pocas simulaciones
     semillas = [rng.getrandbits(32) for _ in range(sims)]
-    opciones = {}
+    opciones = {}  # subconjuntos distintos por valores (se excluye conservar los 5)
     for m in range(31):
         idx = [i for i in range(5) if m >> i & 1]
         opciones.setdefault(tuple(sorted(dice[i] for i in idx)), [i in idx for i in range(5)])
@@ -212,6 +222,7 @@ def mostrar_dados(d, conservados=()):
 
 
 def pedir(texto):
+    """input() en minúsculas; sale limpio si se cierra la entrada."""
     try:
         return input(texto).strip().lower()
     except EOFError:
@@ -219,8 +230,9 @@ def pedir(texto):
 
 
 def turno_usuario(t, tarjetas, rng):
+    """Hasta 3 lanzamientos con dados conservables y luego elección de categoría."""
     dice, mantener = [0] * 5, [False] * 5
-    for restantes in (2, 1, 0):  # tras cada lanzamiento
+    for restantes in (2, 1, 0):  # restantes = lanzamientos que quedan tras este
         dice = [d if mantener[i] else rng.randint(1, 6) for i, d in enumerate(dice)]
         print(f"\nLanzamiento {3 - restantes}/3:")
         mostrar_dados(dice, [i for i, m in enumerate(mantener) if m])
@@ -257,6 +269,7 @@ def turno_usuario(t, tarjetas, rng):
 
 
 def turno_ia(t, rng, sims, seed):
+    """Bill decide tras cada lanzamiento: conservar dados o anotar."""
     print("\n--- Turno de Bill ---")
     dice, mantener = [0] * 5, [False] * 5
     for restantes in (2, 1, 0):
@@ -271,21 +284,39 @@ def turno_ia(t, rng, sims, seed):
         print(f"Bill {texto}")
 
 
+def configurar():
+    """Pregunta simulaciones (entero ≥ 1, Enter = 300) y semilla (entero, Enter = aleatoria)."""
+    while True:
+        r = pedir("Simulaciones de la IA por opción evaluada [300]: ")
+        if r == "":
+            sims = 300
+        elif r.isdigit() and int(r) >= 1:
+            sims = int(r)
+        else:
+            print("Escribe un entero ≥ 1.")
+            continue
+        break
+    while True:
+        r = pedir("Semilla (vacía = aleatoria): ")
+        if r == "":
+            return sims, None
+        try:
+            return sims, int(r)
+        except ValueError:
+            print("La semilla debe ser un entero.")
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Yahtzee vs. IA Monte Carlo (consola)")
-    ap.add_argument("--sims", type=int, default=300, help="simulaciones por opción (def. 300)")
-    ap.add_argument("--seed", type=int, default=None, help="semilla para reproducir partidas")
-    a = ap.parse_args()
-    if a.sims < 1:
-        ap.error("--sims debe ser ≥ 1")
-    rng = random.Random(a.seed)
-    tarjetas = [Tarjeta(), Tarjeta()]
     print(__doc__.split("IA:")[0].split("Reglas especiales")[0].strip())
+    print()
+    sims, seed = configurar()
+    rng = random.Random(seed)  # dados reproducibles si hay semilla
+    tarjetas = [Tarjeta(), Tarjeta()]
     print("\nJuegas tú primero. 3 lanzamientos por turno; 13 categorías cada uno.")
-    for ronda in range(1, 14):
+    for ronda in range(1, 14):  # el usuario siempre abre cada ronda
         print(f"\n{'=' * 36}\nRONDA {ronda}/13\n{'=' * 36}")
         turno_usuario(tarjetas[0], tarjetas, rng)
-        turno_ia(tarjetas[1], rng, a.sims, a.seed)
+        turno_ia(tarjetas[1], rng, sims, seed)
     print("\n" + tabla(tarjetas))
     x, y = tarjetas[0].total, tarjetas[1].total
     print("\n" + ("¡Empate!" if x == y else "¡Ganaste!" if x > y else "Gana Bill.") +
