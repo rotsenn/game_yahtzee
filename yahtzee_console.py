@@ -32,11 +32,11 @@ NOMBRES = {"unos": "Unos", "doses": "Doses", "treses": "Treses", "cuatros": "Cua
            "chance": "Chance", "yahtzee": "YAHTZEE"}
 BONO_SUP, UMBRAL, BONO_YAHTZEE, PTS_YAHTZEE = 35, 63, 100, 50
 
-
-def es_yahtzee(d):
+# dice si los cinco dados son iguales.
+def es_yahtzee(d): 
     return len(set(d)) == 1
 
-
+# calcula cuántos puntos da una categoría con unos dados, con las reglas normales.
 def puntos_base(cat, dice):
     """Puntos de una categoría con reglas normales (sin comodín)."""
     c, total, caras = Counter(dice), sum(dice), set(dice)
@@ -65,15 +65,19 @@ class Tarjeta:
         self.p = {c: None for c in CATEGORIES}
         self.bono_yahtzee = 0
 
+    # lista las casillas que todavía están vacías.
     def libres(self):
         return [c for c in CATEGORIES if self.p[c] is None]
 
+    # dice si el jugador ya llenó las 13.
     def completa(self):
         return not self.libres()
 
+    # dice si hay un Yahtzee extra, o sea, si sale Yahtzee y la casilla Yahtzee ya está ocupada.
     def es_comodin(self, d):
         return es_yahtzee(d) and self.p["yahtzee"] is not None
 
+    # dice dónde se puede anotar con esos dados. Aquí aplico el orden del comodín.
     def disponibles(self, d):
         # Comodín: superior obligatoria > inferior libre > cero en superior libre
         libres = self.libres()
@@ -85,11 +89,13 @@ class Tarjeta:
         inf = [c for c in libres if c in LOWER]
         return inf or libres
 
+    # da los puntos de una casilla. Con comodín, Full House y escaleras valen completo.
     def puntos(self, cat, d):
         if self.es_comodin(d) and cat in ("full_house", "escalera_pequena", "escalera_grande"):
             return {"full_house": 25, "escalera_pequena": 30, "escalera_grande": 40}[cat]
         return puntos_base(cat, d)
 
+    # guarda los puntos y suma el bono de 100 si corresponde.
     def anotar(self, cat, d):
         if cat not in self.disponibles(d):
             raise ValueError(cat)
@@ -119,7 +125,7 @@ BASE = {"unos": 2.1, "doses": 5.3, "treses": 8.6, "cuatros": 12.2, "cincos": 15.
         "seises": 19.2, "trio": 21.7, "cuatro_iguales": 13.1, "full_house": 22.6,
         "escalera_pequena": 29.5, "escalera_grande": 32.7, "chance": 22.0, "yahtzee": 16.9}
 
-
+# mide qué tan conveniente es anotar en una casilla (puntos menos lo que normalmente vale, más la ayuda por el bono de 63).
 def utilidad(t, cat, d):
     """Valor de anotar `cat`: puntos − coste de oportunidad + prima del bono superior."""
     pts = t.puntos(cat, d)
@@ -135,11 +141,11 @@ def utilidad(t, cat, d):
         u += BONO_YAHTZEE
     return u
 
-
+# busca la casilla con mayor utilidad para unos dados.
 def mejor(t, d):
     return max((utilidad(t, c, d), c) for c in t.disponibles(d))
 
-
+# encuentra la serie más larga de números seguidos (para las escaleras).
 def racha(caras):
     best, cur = [], []
     for f in sorted(caras):
@@ -147,7 +153,7 @@ def racha(caras):
         best = cur if len(cur) > len(best) else best
     return best
 
-
+# regla rápida de las simulaciones: sigue una escalera si ya tiene cuatro seguidos, o conserva el número que más se repite.
 def politica(d, t):
     """Política voraz de los rollouts: seguir una escalera de 4+ o conservar el valor más repetido."""
     c = Counter(d)
@@ -158,7 +164,7 @@ def politica(d, t):
     f = max(c, key=lambda x: (c[x], t.p[UPPER[x - 1]] is None, x))
     return [f] * c[f]
 
-
+# hace una simulación: relanza lo que no se conserva, completa los lanzamientos que quedan y devuelve la utilidad final.
 def rollout(kept, restantes, t, rng):
     """Una simulación: completa los lanzamientos y devuelve la utilidad de la mejor casilla."""
     d = list(kept) + [rng.randint(1, 6) for _ in range(5 - len(kept))]
@@ -169,7 +175,7 @@ def rollout(kept, restantes, t, rng):
         d = k + [rng.randint(1, 6) for _ in range(5 - len(k))]
     return mejor(t, d)[0]
 
-
+# la que decide. Simula todas las formas de conservar dados, compara los promedios con anotar ya, y devuelve qué hacer con una frase que lo explica.
 def decidir_ia(dice, restantes, t, sims, seed):
     """-> ('conservar', mascara, texto) | ('anotar', categoria, texto)."""
     u_stop, cat = mejor(t, dice)
@@ -195,6 +201,7 @@ def decidir_ia(dice, restantes, t, sims, seed):
 
 
 # ------------------------------------------------------------------- consola
+# dibuja la tabla de ambos jugadores y, en mi turno, muestra entre paréntesis los puntos posibles.
 def tabla(tarjetas, opciones=None):
     opciones = opciones or {}
     f = lambda a, b, c: f"{a:<20}{b:>8}{c:>8}"
@@ -213,14 +220,14 @@ def tabla(tarjetas, opciones=None):
     filas.append(f("TOTAL", *(str(t.total) for t in tarjetas)))
     return "\n".join(filas)
 
-
+# muestra los dados numerados del 1 al 5 y cuáles se conservan.
 def mostrar_dados(d, conservados=()):
     print("   " + "   ".join(f"[{v}]" for v in d))
     print("   " + "   ".join(f" {i + 1} " for i in range(5)))
     if conservados:
         print("   conservados: " + ", ".join(str(i + 1) for i in conservados))
 
-
+# lee lo que escribo en minúsculas y sale sin errores si se cierra la entrada.
 def pedir(texto):
     """input() en minúsculas; sale limpio si se cierra la entrada."""
     try:
@@ -228,12 +235,13 @@ def pedir(texto):
     except EOFError:
         raise SystemExit("\nEntrada finalizada.")
 
-
+# maneja mi turno: hasta tres lanzamientos, elegir qué dados conservar y escoger la categoría.
 def turno_usuario(t, tarjetas, rng):
     """Hasta 3 lanzamientos con dados conservables y luego elección de categoría."""
     dice, mantener = [0] * 5, [False] * 5
     for restantes in (2, 1, 0):  # restantes = lanzamientos que quedan tras este
         dice = [d if mantener[i] else rng.randint(1, 6) for i, d in enumerate(dice)]
+        print("** Turno: Tú **")
         print(f"\nLanzamiento {3 - restantes}/3:")
         mostrar_dados(dice, [i for i, m in enumerate(mantener) if m])
         if restantes == 0:
@@ -267,7 +275,7 @@ def turno_usuario(t, tarjetas, rng):
             print(f"Anotaste {t.anotar(cat, dice)} en {NOMBRES[cat]}.")
             return
 
-
+# hace lo mismo con la máquina, de forma automática y explicando sus jugadas.
 def turno_ia(t, rng, sims, seed):
     """Bill decide tras cada lanzamiento: conservar dados o anotar."""
     print("\n--- Turno de Bill ---")
@@ -283,7 +291,7 @@ def turno_ia(t, rng, sims, seed):
         mantener = arg
         print(f"Bill {texto}")
 
-
+# pregunta las simulaciones y la semilla antes de empezar.
 def configurar():
     """Pregunta simulaciones (entero ≥ 1, Enter = 300) y semilla (entero, Enter = aleatoria)."""
     while True:
@@ -305,7 +313,7 @@ def configurar():
         except ValueError:
             print("La semilla debe ser un entero.")
 
-
+# juega las 13 rondas (yo empiezo siempre) y al final muestra la tabla y el ganador.
 def main():
     print(__doc__.split("IA:")[0].split("Reglas especiales")[0].strip())
     print()
